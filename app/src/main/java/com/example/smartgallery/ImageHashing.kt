@@ -1,14 +1,54 @@
 package com.example.smartgallery
 
 import android.graphics.Bitmap
-import kotlin.math.abs
-import kotlin.math.pow
-import kotlin.math.sqrt
+import android.util.Log
 
 object ImageHashing {
-    // Fallback pure-Kotlin implementations (kept but we will prefer native)
-    private fun kotlinDHash(bmp: Bitmap): String { /* existing Kotlin dHash code */
-        // copy earlier dhash implementation here
+
+    fun dhashFromBitmap(bmp: Bitmap): String {
+        return try {
+            val w = bmp.width
+            val h = bmp.height
+            val pixels = IntArray(w * h)
+            bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+            NativeBridge.nativeDHash(pixels, w, h)
+        } catch (t: Throwable) {
+            // fallback to kotlin implementation (previous code)
+            Log.w("ImageHashing", "Fallback to dhash kotlin impl", t)
+            kotlinDHash(bmp)
+        }
+    }
+
+    fun isBlurryFromBitmap(bmp: Bitmap, threshold: Float = 100.0f): Boolean {
+        return try {
+            val w = bmp.width
+            val h = bmp.height
+            val pixels = IntArray(w * h)
+            bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+            NativeBridge.nativeIsBlurry(pixels, w, h, threshold)
+        } catch (t: Throwable) {
+            Log.w("ImageHashing", "Fallback to blurry kotlin impl", t)
+            kotlinIsBlurry(bmp, threshold)
+        }
+    }
+
+    // NEW: get raw variance for calibration
+    fun lapVarianceFromBitmap(bmp: Bitmap): Double {
+        return try {
+            val w = bmp.width
+            val h = bmp.height
+            val pixels = IntArray(w * h)
+            bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+            NativeBridge.nativeLapVariance(pixels, w, h)
+        } catch (t: Throwable) {
+            // fallback compute approximate variance (simple)
+            Log.w("ImageHashing", "Fallback to approximate variance", t)
+            kotlinLapVarianceApprox(bmp)
+        }
+    }
+
+    // ---------- FALLBACK Kotlin impls (kept for robustness) ----------
+    private fun kotlinDHash(bmp: Bitmap): String {
         val small = Bitmap.createScaledBitmap(bmp, 9, 8, true)
         val bits = StringBuilder()
         for (y in 0 until 8) {
@@ -24,24 +64,28 @@ object ImageHashing {
         return hex
     }
 
-    private fun kotlinIsBlurry(bmp: Bitmap, threshold: Float = 100.0f): Boolean {
-        // use your earlier Kotlin isBlurry code (approx)
+    private fun kotlinIsBlurry(bmp: Bitmap, threshold: Float = 100f): Boolean {
+        return kotlinLapVarianceApprox(bmp) < threshold
+    }
+
+    private fun kotlinLapVarianceApprox(bmp: Bitmap): Double {
         val w = bmp.width
         val h = bmp.height
         var sum = 0.0
         var cnt = 0
-        for (y in 1 until h-1 step 4) {
-            for (x in 1 until w-1 step 4) {
-                val c = rgbToGray(bmp.getPixel(x,y))
-                val gx = -rgbToGray(bmp.getPixel(x-1,y)) + rgbToGray(bmp.getPixel(x+1,y))
-                val gy = -rgbToGray(bmp.getPixel(x,y-1)) + rgbToGray(bmp.getPixel(x,y+1))
-                val lap = (gx*gx + gy*gy).toDouble()
-                sum += lap
+        for (y in 1 until h - 1 step 4) {
+            for (x in 1 until w - 1 step 4) {
+                val center = rgbToGray(bmp.getPixel(x, y))
+                val left = rgbToGray(bmp.getPixel(x - 1, y))
+                val right = rgbToGray(bmp.getPixel(x + 1, y))
+                val up = rgbToGray(bmp.getPixel(x, y - 1))
+                val down = rgbToGray(bmp.getPixel(x, y + 1))
+                val lap = (left + right + up + down) - 4 * center
+                sum += (lap * lap).toDouble()
                 cnt++
             }
         }
-        val variance = if (cnt > 0) (sum / cnt) else 0.0
-        return variance < threshold
+        return if (cnt > 0) sum / cnt else 0.0
     }
 
     private fun rgbToGray(pixel: Int): Int {
@@ -51,36 +95,8 @@ object ImageHashing {
         return (0.299 * r + 0.587 * g + 0.114 * b).toInt()
     }
 
-    // Public API: accept a Bitmap thumbnail and return dhash
-    fun dhashFromBitmap(bmp: Bitmap): String {
-        return try {
-            // get pixels into IntArray (will be used by native)
-            val w = bmp.width
-            val h = bmp.height
-            val pixels = IntArray(w * h)
-            bmp.getPixels(pixels, 0, w, 0, 0, w, h)
-            // call native (native expects ARGB ints)
-            NativeBridge.nativeDHash(pixels, w, h)
-        } catch (e: Throwable) {
-            // fallback
-            kotlinDHash(bmp)
-        }
-    }
-
-    fun isBlurryFromBitmap(bmp: Bitmap, threshold: Float = 100.0f): Boolean {
-        return try {
-            val w = bmp.width
-            val h = bmp.height
-            val pixels = IntArray(w * h)
-            bmp.getPixels(pixels, 0, w, 0, 0, w, h)
-            NativeBridge.nativeIsBlurry(pixels, w, h, threshold)
-        } catch (e: Throwable) {
-            kotlinIsBlurry(bmp, threshold)
-        }
-    }
-
-    // helper: Hamming distance remains same as before
-    fun hammingDistanceHex(a: String, b: String): Int { /* same as before */
+    // Hamming helper (same as earlier)
+    fun hammingDistanceHex(a: String, b: String): Int {
         val len = minOf(a.length, b.length)
         var dist = 0
         for (i in 0 until len) {

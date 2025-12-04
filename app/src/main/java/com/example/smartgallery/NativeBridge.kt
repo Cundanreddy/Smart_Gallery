@@ -7,4 +7,6 @@ object NativeBridge {
 
     external fun nativeDHash(pixels: IntArray, width: Int, height: Int): String
     external fun nativeIsBlurry(pixels: IntArray, width: Int, height: Int, threshold: Float): Boolean
+    external fun nativeLapVariance(pixels: IntArray, width: Int, height: Int): Double
+
 }
