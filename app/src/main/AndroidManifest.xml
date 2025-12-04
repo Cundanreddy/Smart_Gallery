@@ -17,6 +17,12 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.SmartGallery">
+
+        <service
+            android:name=".ForegroundScanService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback|dataSync" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
