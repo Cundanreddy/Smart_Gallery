@@ -10,7 +10,7 @@ object NotificationSetup {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channel = NotificationChannel(
-                ForegroundScanService.CHANNEL_ID,
+                NotificationHelper.CHANNEL_ID,
                 "Smart Gallery Scans",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {

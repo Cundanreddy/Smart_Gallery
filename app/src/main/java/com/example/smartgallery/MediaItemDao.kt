@@ -15,15 +15,15 @@ interface MediaItemDao {
     @Update
     suspend fun update(item: MediaItem)
 
+
+
     @Transaction
     suspend fun upsert(item: MediaItem) {
         val existing = findByUri(item.contentUri)
         if (existing == null) {
             insert(item)
         } else {
-            // preserve primary id
-            val new = item.copy(id = existing.id)
-            update(new)
+            update(item.copy(id = existing.id))
         }
     }
 

@@ -40,12 +40,38 @@ class MainActivity : ComponentActivity() {
             val items = remember { mutableStateListOf<ScanProgress>() }
             var scheduled by remember { mutableStateOf(false) }
 
+
+            val db = com.example.smartgallery.data.AppDatabase.get(applicationContext)
+            val repo = com.example.smartgallery.data.MediaRepository(db.mediaItemDao())
+            val recentScans by repo.recentScansFlow(200).collectAsState(initial = emptyList())
+
+
             val permissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestMultiplePermissions(),
                 onResult = { perms ->
                     // You can check here if permissions were granted; for now we just log
                     Log.d("MainActivity", "Permissions result: $perms")
                 })
+
+// convert to ScanProgress-like objects (thumbnail null) and prepend to UI list if desired
+            LaunchedEffect(recentScans) {
+                recentScans.forEach { mi ->
+                    val p = ScanProgress(
+                        id = 0L,
+                        uri = android.net.Uri.parse(mi.contentUri),
+                        displayName = mi.contentUri.substringAfterLast('/'),
+                        thumbnail = null,
+                        sha256 = mi.sha256,
+                        dhash = mi.dhash,
+                        lapVariance = mi.lapVariance ?: 0.0,
+                        isBlurry = mi.isBlurry ?: false,
+                        index = 0,
+                        totalEstimated = 0
+                    )
+                    // push to UI list if not already present
+                }
+            }
+
 
             LaunchedEffect(Unit) {
                 val permissionsToRequest = mutableListOf<String>()

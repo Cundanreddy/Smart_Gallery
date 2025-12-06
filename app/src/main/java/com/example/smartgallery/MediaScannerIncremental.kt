@@ -1,44 +1,23 @@
 package com.example.smartgallery
 
-
 import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.MediaStore
-import com.example.smartgallery.data.MediaRepository
-import com.example.smartgallery.data.AppDatabase
 import com.example.smartgallery.data.MediaItem
+import com.example.smartgallery.data.MediaRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.security.MessageDigest
-import kotlin.system.measureTimeMillis
 
+class MediaScannerIncremental(
+    private val resolver: ContentResolver,
+    private val repository: MediaRepository
+) {
 
-//data class ScanProgress(
-//    val id: Long,
-//    val uri: Uri,
-//    val displayName: String?,
-//    val thumbnail: Bitmap?,
-//    val sha256: String?,
-//    val dhash: String?,
-//    val lapVariance: Double,
-//    val isBlurry: Boolean,
-//    val index: Int,
-//    val totalEstimated: Int // may be 0 if unknown
-//)
-
-// decide a scan version: bump when algorithm changes
-private const val SCAN_VERSION = 1
-
-class MediaScannerIncremental(private val resolver: ContentResolver, private val repository: MediaRepository) {
-
-    /**
-     * Scan images incrementally. `perImage` is called for every scanned item (both skipped and processed).
-     * For skipped items `sha256/dhash/lapVariance` may be null but we still emit the DB values to UI if available.
-     */
-    suspend fun scanImagesIncremental(perImage: (ScanProgress) -> Unit) : List<ScanProgress> {
+    suspend fun scanImagesIncremental(perImage: suspend (ScanProgress) -> Unit): List<ScanProgress> {
         return withContext(Dispatchers.IO) {
             val results = mutableListOf<ScanProgress>()
             val projection = arrayOf(
@@ -52,7 +31,6 @@ class MediaScannerIncremental(private val resolver: ContentResolver, private val
             val sortOrder = "${MediaStore.Images.Media.DATE_MODIFIED} DESC"
             val cursor = resolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, sortOrder)
             val presentUris = mutableListOf<String>()
-            var idx = 0
             cursor?.use { c ->
                 val idIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
                 val nameIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
@@ -61,6 +39,8 @@ class MediaScannerIncremental(private val resolver: ContentResolver, private val
                 val sizeIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
                 val modIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
 
+                var idx = 0
+                val total = c.count
                 while (c.moveToNext()) {
                     idx++
                     val id = c.getLong(idIdx)
@@ -73,17 +53,28 @@ class MediaScannerIncremental(private val resolver: ContentResolver, private val
                     val uriStr = uri.toString()
                     presentUris.add(uriStr)
 
-                    val need = repository.needsProcessing(uriStr, size, dateModified, SCAN_VERSION)
+                    val need = repository.needsProcessing(uriStr, size, dateModified, ScanConfig.SCAN_VERSION)
                     if (!need) {
-                        // fetch from DB to emit values to UI
-                        val existing = repository.dao.findByUri(uriStr) // make dao accessible or add a repo method to fetch
-                        val progress = ScanProgress(id, uri, name, null, existing?.sha256, existing?.dhash, existing?.lapVariance ?: 0.0, existing?.isBlurry ?: false, idx, c.count)
+                        // fetch DB record and emit a cached ScanProgress
+                        val existing = repository.findByUri(uriStr)
+                        val progress = ScanProgress(
+                            id = id,
+                            uri = uri,
+                            displayName = name,
+                            thumbnail = null, // we can load thumbnail on-demand if needed
+                            sha256 = existing?.sha256,
+                            dhash = existing?.dhash,
+                            lapVariance = existing?.lapVariance ?: 0.0,
+                            isBlurry = existing?.isBlurry ?: false,
+                            index = idx,
+                            totalEstimated = total
+                        )
                         results.add(progress)
                         perImage(progress)
                         continue
                     }
 
-                    // Need processing: create thumbnail, compute sha, dhash, lapVariance (native)
+                    // Need processing: create thumbnail, compute sha, dhash, lapVariance
                     val thumb = resolver.openInputStream(uri)?.use { stream ->
                         decodeSampledBitmapFromStream(stream, 200, 200)
                     }
@@ -94,7 +85,7 @@ class MediaScannerIncremental(private val resolver: ContentResolver, private val
 
                     val dh = thumb?.let { ImageHashing.dhashFromBitmap(it) }
                     val variance = thumb?.let { ImageHashing.lapVarianceFromBitmap(it) } ?: 0.0
-                    val blurry = thumb?.let { ImageHashing.isBlurryFromBitmap(it, 100.0f) } ?: false
+                    val blurry = thumb?.let { ImageHashing.isBlurryFromBitmap(it, 100f) } ?: false
 
                     // persist result
                     val item = MediaItem(
@@ -108,17 +99,17 @@ class MediaScannerIncremental(private val resolver: ContentResolver, private val
                         sizeBytes = size,
                         dateModified = dateModified,
                         lastScannedAt = System.currentTimeMillis(),
-                        scanVersion = SCAN_VERSION
+                        scanVersion = ScanConfig.SCAN_VERSION
                     )
                     repository.saveScanResult(item)
 
-                    val progress = ScanProgress(id, uri, name, thumb, sha, dh, variance, blurry, idx, c.count)
-                    results.add(progress)
-                    perImage(progress)
+                    val p = ScanProgress(id, uri, name, thumb, sha, dh, variance, blurry, idx, total)
+                    results.add(p)
+                    perImage(p)
                 }
             }
 
-            // optional: cleanup DB rows for files that no longer exist
+            // cleanup DB rows for files that no longer exist
             repository.cleanupMissing(presentUris)
 
             results

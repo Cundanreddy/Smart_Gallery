@@ -5,31 +5,34 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.core.app.NotificationCompat
-import com.example.smartgallery.ForegroundScanService
-import com.example.smartgallery.MediaScanner
-import com.example.smartgallery.ScanBus
+import com.example.smartgallery.data.AppDatabase
+import com.example.smartgallery.data.MediaRepository
 
 class ScanWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
 
+    private val repository: MediaRepository by lazy {
+        val db = AppDatabase.get(applicationContext)
+        MediaRepository(db.mediaItemDao())
+    }
+
     override suspend fun doWork(): Result {
-        // Build foreground info
-        val notification = NotificationCompat.Builder(applicationContext, ForegroundScanService.CHANNEL_ID)
+        val notification = NotificationCompat.Builder(applicationContext, NotificationHelper.CHANNEL_ID)
             .setContentTitle("Smart Gallery — Scheduled Scan")
             .setContentText("Preparing...")
             .setSmallIcon(android.R.drawable.ic_menu_search)
             .setOngoing(true)
             .build()
-        setForeground(ForegroundInfo(ForegroundScanService.NOTIFICATION_ID, notification))
+        setForeground(ForegroundInfo(NotificationHelper.NOTIFICATION_ID, notification))
 
         return try {
-            val scanner = MediaScanner(applicationContext.contentResolver)
-            scanner.scanImages { p ->
-                // emit progress to UI via ScanBus
+            val scanner = MediaScannerIncremental(applicationContext.contentResolver, repository)
+            scanner.scanImagesIncremental { p ->
+                // scanner persists into DB already; still emit to bus
                 ScanBus.emit(p)
             }
-            // success
             Result.success()
         } catch (t: Throwable) {
+            t.printStackTrace()
             Result.retry()
         }
     }
