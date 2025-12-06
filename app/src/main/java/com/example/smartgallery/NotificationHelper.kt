@@ -1,8 +1,11 @@
 package com.example.smartgallery
 
 import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.os.Build
 import androidx.core.app.NotificationCompat
 
 object NotificationHelper {
@@ -13,6 +16,20 @@ object NotificationHelper {
     /**
      * Build a very simple foreground notification used when scan starts.
      */
+    fun createChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                NotificationHelper.CHANNEL_ID,
+                "Smart Gallery Scans",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Notifications for Smart Gallery scan progress"
+                setShowBadge(false)
+            }
+            nm.createNotificationChannel(channel)
+        }
+    }
     fun buildStartNotification(context: Context, text: String): Notification {
         val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
         val contentIntent = PendingIntent.getActivity(

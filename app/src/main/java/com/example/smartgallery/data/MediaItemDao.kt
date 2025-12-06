@@ -35,4 +35,8 @@ interface MediaItemDao {
 
     @Query("SELECT * FROM media_items ORDER BY lastScannedAt DESC LIMIT :limit")
     fun recentScans(limit: Int): Flow<List<MediaItem>>
+
+    @Query("DELETE FROM media_items WHERE contentUri IN (:uris)")
+    suspend fun deleteByUris(uris: List<String>)
+
 }

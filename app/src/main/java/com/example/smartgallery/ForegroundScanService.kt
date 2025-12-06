@@ -19,7 +19,7 @@ class ForegroundScanService : Service() {
     override fun onCreate() {
         super.onCreate()
         val db = AppDatabase.get(applicationContext)
-        repository = MediaRepository(db.mediaItemDao())
+        repository = MediaRepository(db.mediaItemDao(), db.quarantineDao(), applicationContext)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

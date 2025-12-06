@@ -12,7 +12,7 @@ class ScanWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
 
     private val repository: MediaRepository by lazy {
         val db = AppDatabase.get(applicationContext)
-        MediaRepository(db.mediaItemDao())
+        MediaRepository(db.mediaItemDao(), db.quarantineDao(), applicationContext)
     }
 
     override suspend fun doWork(): Result {
