@@ -1,4 +1,4 @@
-package com.smartgallery
+package com.example.smartgallery
 
 import android.content.Context
 import androidx.work.CoroutineWorker

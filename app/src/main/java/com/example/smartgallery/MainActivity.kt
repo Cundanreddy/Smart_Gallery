@@ -1,8 +1,13 @@
 package com.example.smartgallery
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.material3.*
@@ -10,24 +15,21 @@ import androidx.compose.runtime.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.lifecycleScope
 import androidx.work.*
-import com.smartgallery.ScanWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
 
     private val workTag = "smartgallery_periodic_scan"
+
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,7 +38,31 @@ class MainActivity : ComponentActivity() {
         setContent {
             var scanning by remember { mutableStateOf(false) }
             val items = remember { mutableStateListOf<ScanProgress>() }
-            var scheduled by remember { mutableStateOf(isWorkScheduled()) }
+            var scheduled by remember { mutableStateOf(false) }
+
+            val permissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestMultiplePermissions(),
+                onResult = { perms ->
+                    // You can check here if permissions were granted; for now we just log
+                    Log.d("MainActivity", "Permissions result: $perms")
+                })
+
+            LaunchedEffect(Unit) {
+                val permissionsToRequest = mutableListOf<String>()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    // On Android 13+ request notification and media read permissions at runtime
+                    permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+                    permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
+                } else {
+                    // For older Android versions request legacy external storage read
+                    permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
+                if (permissionsToRequest.isNotEmpty()) {
+                    permissionLauncher.launch(permissionsToRequest.toTypedArray())
+                }
+                // check schedule state
+                scheduled = isWorkScheduled()
+            }
 
             // collect from ScanBus
             LaunchedEffect(Unit) {
@@ -47,7 +73,10 @@ class MainActivity : ComponentActivity() {
             }
 
             Scaffold(topBar = { TopAppBar(title = { Text("Smart Gallery") }) }) { padding ->
-                Column(modifier = Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
+                Column(modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(12.dp)) {
                     Row {
                         Button(onClick = {
                             if (!scanning) {
@@ -65,7 +94,7 @@ class MainActivity : ComponentActivity() {
 
                         Button(onClick = {
                             if (!scheduled) {
-                                // schedule periodic work: once per day (can adjust)
+                                // schedule periodic work: once per day
                                 val req = PeriodicWorkRequestBuilder<ScanWorker>(1, TimeUnit.DAYS)
                                     .addTag(workTag)
                                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
@@ -92,33 +121,53 @@ class MainActivity : ComponentActivity() {
 
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         items(items) { p ->
-                            Card(modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
                                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                             ) {
-                                Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    modifier = Modifier.padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     if (p.thumbnail != null) {
-                                        Image(bitmap = p.thumbnail.asImageBitmap(),
+                                        Image(
+                                            bitmap = p.thumbnail.asImageBitmap(),
                                             contentDescription = null,
-                                            modifier = Modifier.size(72.dp))
+                                            modifier = Modifier.size(72.dp)
+                                        )
                                     } else {
-                                        Box(modifier = Modifier
-                                            .size(72.dp)
-                                            .background(Color.LightGray))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(72.dp)
+                                                .background(Color.LightGray)
+                                        )
                                     }
                                     Spacer(Modifier.width(8.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(p.displayName ?: p.uri.lastPathSegment ?: "image", maxLines = 2)
-                                        Text("dHash: ${p.dhash ?: "—"}", style = MaterialTheme.typography.bodySmall)
-                                        Text("LapVar: ${"%.1f".format(p.lapVariance)}", style = MaterialTheme.typography.bodySmall)
-                                        Text("SHA: ${p.sha256?.take(12) ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            "dHash: ${p.dhash ?: "—"}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            "LapVar: ${String.format("%.1f", p.lapVariance)}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            "SHA: ${p.sha256?.take(12) ?: "—"}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
                                     }
                                     Column(horizontalAlignment = Alignment.End) {
                                         val blurColor = if (p.isBlurry) Color.Red else Color(0xFF2E7D32)
                                         Text(if (p.isBlurry) "BLUR" else "OK", color = blurColor)
                                         Spacer(Modifier.height(6.dp))
-                                        Text("${p.index}", style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            "${p.index}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
                                     }
                                 }
                             }
@@ -129,9 +178,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun isWorkScheduled(): Boolean {
+    private suspend fun isWorkScheduled(): Boolean = withContext(Dispatchers.IO) {
         val wm = WorkManager.getInstance(applicationContext)
-        val statuses = wm.getWorkInfosByTag(workTag).get()
-        return statuses.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+        try {
+            val statuses = wm.getWorkInfosByTag(workTag).get()
+            statuses.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to check scheduled work", e)
+            false
+        }
     }
 }
